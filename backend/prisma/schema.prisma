@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+// The connection URL lives in prisma.config.ts (Prisma 7 style).
+datasource db {
+  provider = "postgresql"
+}
+
+// Vectors are 768 wide. Gemini returns 3072 by default, so embed() must
+// ask for outputDimensionality: 768 (Step 3). A different size will not insert.
+// Prisma cannot read or write vector columns: they are Unsupported here,
+// optional so Prisma can still create rows, and filled with raw SQL.
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  passwordHash String
+  createdAt    DateTime      @default(now())
+  documents    Document[]
+  quizAttempts QuizAttempt[]
+  flashcards   Flashcard[]
+}
+
+model Document {
+  id        String         @id @default(cuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id])
+  filename  String
+  status    DocumentStatus @default(PENDING)
+  createdAt DateTime       @default(now())
+  topics    Topic[]
+  chunks    Chunk[]
+}
+
+model Topic {
+  id         String      @id @default(cuid())
+  documentId String
+  document   Document    @relation(fields: [documentId], references: [id])
+  name       String
+  chunks     Chunk[]
+  questions  Question[]
+  flashcards Flashcard[]
+}
+
+model Chunk {
+  id         String                       @id @default(cuid())
+  documentId String
+  document   Document                     @relation(fields: [documentId], references: [id])
+  // Optional: chunks are saved first, topics are assigned after extraction.
+  topicId    String?
+  topic      Topic?                       @relation(fields: [topicId], references: [id])
+  text       String
+  page       Int
+  embedding  Unsupported("vector(768)")?
+}
+
+model Question {
+  id           String                       @id @default(cuid())
+  topicId      String
+  topic        Topic                        @relation(fields: [topicId], references: [id])
+  text         String
+  options      String[]
+  correctIndex Int
+  sourceQuote  String
+  embedding    Unsupported("vector(768)")?
+  // Used to pick the most recent questions for the "do not repeat" prompt.
+  createdAt    DateTime                     @default(now())
+  answers      Answer[]
+  flashcards   Flashcard[]
+}
+
+model QuizAttempt {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  answers   Answer[]
+}
+
+model Answer {
+  id           String      @id @default(cuid())
+  attemptId    String
+  attempt      QuizAttempt @relation(fields: [attemptId], references: [id])
+  questionId   String
+  question     Question    @relation(fields: [questionId], references: [id])
+  chosenOption Int
+  isCorrect    Boolean
+}
+
+model Flashcard {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  topicId    String
+  topic      Topic     @relation(fields: [topicId], references: [id])
+  // Set when the card came from a wrong quiz answer.
+  questionId String?
+  question   Question? @relation(fields: [questionId], references: [id])
+  front      String
+  back       String
+
+  // FSRS fields named exactly like the ts-fsrs Card type,
+  // so a row can be passed to the scheduler without mapping.
+  due            DateTime
+  stability      Float
+  difficulty     Float
+  scheduled_days Int
+  learning_steps Int
+  reps           Int
+  lapses         Int
+  state          Int // ts-fsrs State: 0 New, 1 Learning, 2 Review, 3 Relearning
+  last_review    DateTime?
+}
